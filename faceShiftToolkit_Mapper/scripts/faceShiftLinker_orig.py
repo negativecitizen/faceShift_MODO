@@ -1,13 +1,9 @@
 #python
 import lx
-import modo
 '''
 This script uses a faceshift target file to relink the BVH blendshape joints to the respective morph strength channels
 Select the mesh you want and then call the script.
 '''
-
-scene = modo.Scene()
-graph = lx.object.ItemGraph(scene.GraphLookup('deformers'))
 
 fsMorphs = [] # faceShift morphs in the target file
 assetMorphs = [] # expected morphs mapped to the faceShift morphs in the targetfile.
@@ -87,12 +83,18 @@ def linkMorphs(meshID):
 				# Retrieve the locator ID from the matched array based on the name
 				fsLink_Locator_ID = fslocator_IDList[fslocator_NameList.index(fsMorphName)]
 				# We need the xfrmScl locator for this locator.
+				scl_xfrm_item = lx.eval('query sceneservice item.xfrmScl ? {%s}' % fsLink_Locator_ID)
 
-				lx.out('{%s}' % fsLink_Locator_ID)
-				lx.out('{%s}' % morphID)
+				# Select our driver channel first
+				lx.out('Selecting locator {%s} channel scl.Z' % scl_xfrm_item)
+				lx.eval('select.channel {%s:%s} set' % (scl_xfrm_item, "scl.Z"))
 
-				scene.item(fsLink_Locator_ID).scale.z >> scene.item(morphID).channel('strength')
-				
+				# Select our morph influence strength channel next.
+				lx.out('Selecting morph {%s} channel strength' % morphID)
+				lx.eval('select.channel {%s:%s} add' % (morphID, "strength"))
+
+				# Link them together
+				lx.eval('channel.link toggle')
 		monitor.step()
 
 def indices(lst, element):
@@ -108,39 +110,45 @@ def indices(lst, element):
 def prepareLocatorList():
 	global fslocator_IDList
 	global fslocator_NameList
+	locatorNames = []
+	locatorIDs = []
 	lx.out('Prepping locator list')
-	locators = [l for l in modo.Scene().items('locator') if l.type == 'locator']
-	monitor = lx.Monitor( len(locators) )
-	for locator in locators:
-		myParentID = locator.parent
+	numberOfSceneItems = lx.eval('query sceneservice item.N ?')
+	monitor = lx.Monitor( numberOfSceneItems )     
+	for i in range(numberOfSceneItems):
+		type = lx.eval('query sceneservice item.type ? %s' % i)
+		if (type == "locator"):
+			locatorIDs.append(lx.eval('query sceneservice item.id ? %s' % i))
+			locatorNames.append(lx.eval('query sceneservice item.name ? %s' % i))
+		monitor.step()
+	monitor = lx.Monitor( len(locatorIDs) )     
+	for index in range(len(locatorIDs)):
+		myParentID = lx.eval('query sceneservice item.parent ? {%s}' % locatorIDs[index])
 		if (myParentID != None):
-			myParentName = myParentID.UniqueName()
+			myParentName = lx.eval('query sceneservice item.name ? {%s}' % myParentID)
 			if (myParentName == "Blendshapes"):
-				fslocator_IDList.append(locator.Ident())
-				fslocator_NameList.append(locator.UniqueName())
+				fslocator_IDList.append(lx.eval('query sceneservice item.id ? {%s}' % locatorIDs[index]))
+				fslocator_NameList.append(lx.eval('query sceneservice item.name ? {%s}' % locatorNames[index]))
 		monitor.step()
 
 def findMorphInfluences(meshID):
 	global morphInfluenceIDs
 	lx.out('Finding morph influences')
-	numberOfDeformers = modo.Scene().items('morphDeform')
-	# numberOfDeformers = modo.Scene().morphDeform('morphDeform')
-	lx.out('Morph influences : {%d}' % len(numberOfDeformers))
-	monitor = lx.Monitor( len(numberOfDeformers) )     
-	for influence in numberOfDeformers:
-		if influence.type == 'morphDeform': #safety check
-			influenceObject = modo.item.Deformer(influence)
-			for mesh in influenceObject.meshes:
-				deformerMeshID = mesh.id
-				lx.out('Deformer mesh ID is : {%s}' % deformerMeshID)
-				lx.out('meshID is : {%s}' % meshID)
-				if (meshID == deformerMeshID):
-					lx.out('Matched influence {%s} to mesh {%s}' %(influence.id, deformerMeshID))
-					morphInfluenceIDs.append(influence.id)
+	numberOfDeformers = lx.eval('query sceneservice morphDeform.N ?')
+	lx.out('Morph influences : {%d}' % numberOfDeformers)
+	monitor = lx.Monitor( numberOfDeformers )     
+	for influence in range(numberOfDeformers):
+		currentMorphID = lx.eval('query sceneservice morphDeform.id ? {%s}' % influence)
+		currentMorphName = lx.eval('query sceneservice morphDeform.name ? {%s}' % influence)
+		deformerMeshID = lx.eval('query sceneservice deformer.meshes ? {%s}' % currentMorphID)
+		lx.out('Deformer mesh name is : {%s}' % deformerMeshID)
+		if (meshID == deformerMeshID):
+			lx.out('Matched influence {%s} to mesh {%s}' %(currentMorphName, deformerMeshID))
+			morphInfluenceIDs.append(currentMorphID)
 		monitor.step()
 
 def main():
-	meshIDs = modo.Scene().items('mesh')
+	meshIDs = lx.evalN('query sceneservice selection ? mesh')
 	if (len(meshIDs) == 0):
 		lx.out('At least one mesh must be selected to create links')
 		sys.exit()
@@ -150,7 +158,7 @@ def main():
 	else:
 		sys.exit()
 	for meshID in meshIDs:
-		linkMorphs(meshID.id)
+		linkMorphs(meshID)
 
 # From Gwynne Reddick
 def customfile(type, title, format, uname, ext, save_ext=None, path=None):
